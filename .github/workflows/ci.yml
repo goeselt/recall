@@ -54,6 +54,22 @@ jobs:
         run: npm run build
 
       - name: Pedant
+        id: pedant
+        continue-on-error: true
         uses: goeselt/pedant@b8e404a982679f74a8cd9309de5d2492bc8030c3 # v1.2.3
         with:
           ignore: dist/
+          summary-github-step: true
+
+      - name: Publish Pedant Report
+        if: always()
+        uses: goeselt/remark@b5a3f7c0d7b25e6634f1f2f9ef13e6b808370972 # v1.0.3
+        with:
+          body: ${{ steps.pedant.outputs.summary }}
+          comment-key: pedant
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          skip-unchanged: true
+
+      - name: Fail On Pedant Findings
+        if: steps.pedant.outcome != 'success'
+        run: exit 1

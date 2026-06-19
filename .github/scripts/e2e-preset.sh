@@ -28,34 +28,36 @@ resolve_path() {
     local tool="$1"
     require_presets
     [[ -n "${RUNNER_TOOL_CACHE:-}" ]] || die "RUNNER_TOOL_CACHE is not set"
+    # shellcheck disable=SC2016 # $-expressions are JavaScript evaluated by node, not shell
     node -e '
     const fs = require("node:fs");
     const [file, tool] = process.argv.slice(1);
     const preset = JSON.parse(fs.readFileSync(file, "utf8"))[tool];
     if (!preset) { console.error(`unknown preset "${tool}"`); process.exit(1); }
     process.stdout.write(preset.path.replace(/\$\{RUNNER_TOOL_CACHE\}/g, process.env.RUNNER_TOOL_CACHE));
-  ' "$PRESETS" "$tool"
+    ' "$PRESETS" "$tool"
 }
 
 resolve_prefix() {
     local tool="$1" major="${2:-}"
     require_presets
+    # shellcheck disable=SC2016 # $-expressions are JavaScript evaluated by node, not shell
     MAJOR="$major" node -e '
     const fs = require("node:fs");
     const [file, tool] = process.argv.slice(1);
     const preset = JSON.parse(fs.readFileSync(file, "utf8"))[tool];
     if (!preset) { console.error(`unknown preset "${tool}"`); process.exit(1); }
     const map = {
-      major: process.env.MAJOR || "",
-      os: (process.env.RUNNER_OS || "Linux").toLowerCase(),
-      arch: (process.env.RUNNER_ARCH || "X64").toLowerCase(),
+        major: process.env.MAJOR || "",
+        os: (process.env.RUNNER_OS || "Linux").toLowerCase(),
+        arch: (process.env.RUNNER_ARCH || "X64").toLowerCase(),
     };
     const out = preset["key-prefix"]
-      .replace(/\$\{(\w+)\}/g, (_, k) => (k in map ? map[k] : ""))
-      .replace(/-{2,}/g, "-")
-      .replace(/-$/, "");
+        .replace(/\$\{(\w+)\}/g, (_, k) => (k in map ? map[k] : ""))
+        .replace(/-{2,}/g, "-")
+        .replace(/-$/, "");
     process.stdout.write(out);
-  ' "$PRESETS" "$tool"
+    ' "$PRESETS" "$tool"
 }
 
 cmd_path() {

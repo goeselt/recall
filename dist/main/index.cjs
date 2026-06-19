@@ -63019,12 +63019,6 @@ var presets_default = {
     "version-command": ["node", "--version"],
     "version-pattern": "(\\d+\\.\\d+\\.\\d+)"
   },
-  codeql: {
-    path: "${RUNNER_TOOL_CACHE}/CodeQL",
-    "key-prefix": "codeql-${os}-${arch}",
-    "version-command": ["codeql", "version", "--format=terse"],
-    "version-pattern": "(\\d+\\.\\d+\\.\\d+)"
-  },
   python: {
     path: "${RUNNER_TOOL_CACHE}/Python",
     "key-prefix": "python-${major}-${os}-${arch}",
@@ -63084,7 +63078,7 @@ function validateCachePath(value, runnerOs) {
     );
   }
   const normalized = pathApi.normalize(value);
-  const root = pathApi.parse(normalized).root;
+  const { root } = pathApi.parse(normalized);
   if (trimTrailingSeparators(normalized, runnerOs) === trimTrailingSeparators(root, runnerOs)) {
     throw new Error('Input "path" must not be a filesystem root. Choose the specific tool or data directory to cache.');
   }

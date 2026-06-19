@@ -1,16 +1,22 @@
 ---
 name: E2E
 
-# Two test tracks:
+# Three tracks, all on pull_request, aggregated by the "E2E Result" gate at the end:
 #
-#  preset-commands -- validates that each preset's version-command and version-pattern work
-#                     on the real runner using pre-installed tools. Fast (~30s), no cache I/O.
+#  Preset Commands -- validates that each preset's version-command and version-pattern work on the real runner
+#                     using pre-installed tools. Fast (~30s), no cache I/O.
 #
-#  smoke (seed --> warm) -- validates the full cold-->save-->restore lifecycle using only small fixtures
-#                           (CMake ~60 MB, static data dir), plus the PR default-branch save gate.
+#  Smoke (Smoke Seed --> Smoke Warm) -- validates the full cold-->save-->restore lifecycle using small fixtures
+#                     (CMake ~60 MB, static data dir), plus the PR default-branch save gate.
 #
-# Preset path correctness (RUNNER_TOOL_CACHE/<tool>) and the full per-preset save/restore lifecycle are
-# covered by e2e-presets.yml (workflow_dispatch only) because the cache saves for real tools are slow.
+#  Realism (Realism Seed --> Realism Warm) -- per preset, installs the real tool with its canonical setup
+#                     action, saves ${RUNNER_TOOL_CACHE}/<tool> through recall, then on a fresh runner restores
+#                     and proves the directory came back via a per-run marker.
+#
+# The realism track purges and re-seeds shared, real preset key-prefixes, so all runs serialize globally (a
+# per-ref group would let concurrent PRs evict each other's caches mid-run).
+#
+# Require only "E2E Result" as a status check: it depends on every job and fails if any did not succeed.
 
 on:
   pull_request:
@@ -18,8 +24,8 @@ on:
   workflow_dispatch:
 
 concurrency:
-  # Caches are shared state -- do not cancel a run while a post step is saving.
-  group: ${{ github.workflow }}-${{ github.ref }}
+  # Caches are shared state -- serialize across all runs and never cancel a run while a post step is saving.
+  group: ${{ github.workflow }}
   cancel-in-progress: false
 
 permissions:
@@ -35,7 +41,7 @@ defaults:
 
 jobs:
   preset-commands:
-    name: Validate Preset Version Commands
+    name: Preset Commands
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -60,9 +66,10 @@ jobs:
         uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
         with:
           go-version: '1.22'
+          cache: false # this repo has no go.mod; we only need the toolchain for the version command
 
-      # For each preset (except codeql, which has no setup action), read version-command and
-      # version-pattern from presets.json via jq, run the command, and validate the pattern.
+      # For each preset, read version-command and version-pattern from presets.json, run the command on the
+      # pre-installed tool, and validate that the pattern extracts a version.
       # Node.js handles the regex because grep -oP returns the full match, not a capture group.
       - name: Validate Version Commands
         run: |
@@ -71,15 +78,9 @@ jobs:
           import { execFileSync } from 'node:child_process'
 
           const presets = JSON.parse(readFileSync('presets.json', 'utf8'))
-          // Add preset names here when they have no setup action available on the runner.
-          const skip = new Set(['codeql'])
           let failed = false
 
           for (const [name, preset] of Object.entries(presets)) {
-            if (skip.has(name)) {
-              console.log(`preset "${name}": skipped (no setup action available)`)
-              continue
-            }
             const cmd = preset['version-command']
             let output
             try {
@@ -101,7 +102,7 @@ jobs:
           if (failed) process.exit(1)
           EOF
 
-  seed:
+  smoke-seed:
     name: Smoke Seed
     permissions:
       contents: read
@@ -192,9 +193,9 @@ jobs:
           key-prefix: recall-e2e-gated-${{ github.run_id }}-${{ github.run_attempt }}-${{ runner.os }}-${{ runner.arch }}
           version: v1
 
-  warm:
-    name: Smoke Restore
-    needs: seed
+  smoke-warm:
+    name: Smoke Warm
+    needs: smoke-seed
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
@@ -271,3 +272,168 @@ jobs:
           HIT: ${{ steps.gated.outputs.cache-hit }}
         run: |
           test "$HIT" = "false" || { printf '::error::expected gated cache miss, got "%s"\n' "$HIT" >&2; exit 1; }
+
+  realism-seed:
+    name: Realism Seed (${{ matrix.preset }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      actions: write # gh cache delete
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: node
+            major: '20'
+            setup-version: '20'
+          - preset: python
+            major: '3.12'
+            setup-version: '3.12'
+          - preset: go
+            major: '1.22'
+            setup-version: '1.22'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build Action
+        run: |
+          npm ci
+          npm run build
+
+      # Force a cold seed so this run's marker is the one that gets saved. Real preset key-prefixes are used
+      # deliberately (this repo has no production consumers to evict).
+      - name: Purge Preset Cache
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PRESET: ${{ matrix.preset }}
+          MAJOR: ${{ matrix.major }}
+        run: |
+          prefix="$(.github/scripts/e2e-preset.sh prefix "$PRESET" "$MAJOR")"
+          printf 'purging caches with prefix "%s-"\n' "$prefix"
+          gh cache list --repo "$GITHUB_REPOSITORY" --limit 1000 --json id,key -q '.[] | [.id, .key] | @tsv' \
+            | while IFS=$'\t' read -r id key; do
+                case "$key" in
+                  "$prefix-"*) gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || true ;;
+                esac
+              done
+
+      - name: Setup Tool (Node)
+        if: matrix.preset == 'node'
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: ${{ matrix.setup-version }}
+
+      - name: Setup Tool (Python)
+        if: matrix.preset == 'python'
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: ${{ matrix.setup-version }}
+
+      - name: Setup Tool (Go)
+        if: matrix.preset == 'go'
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: ${{ matrix.setup-version }}
+          cache: false # this repo has no go.mod; we only need the toolchain in the tool cache
+
+      # Stamp before recall saves (the post step runs at job end and tars the directory with the marker).
+      - name: Stamp Marker
+        env:
+          PRESET: ${{ matrix.preset }}
+          MARKER: ${{ github.run_id }}-${{ github.run_attempt }}
+        run: .github/scripts/e2e-preset.sh stamp "$PRESET" "$MARKER"
+
+      - name: Recall Restore (Cold)
+        id: recall
+        uses: ./
+        with:
+          tool: ${{ matrix.preset }}
+          tool-major: ${{ matrix.major }}
+          save-on-default-branch-only: 'false'
+
+      - name: Assert Cold Miss
+        env:
+          RESTORED: ${{ steps.recall.outputs.cache-restored }}
+        run: |
+          test "$RESTORED" = "false" \
+            || { printf '::error::expected cold miss after purge, got cache-restored="%s"\n' "$RESTORED" >&2; exit 1; }
+
+  realism-warm:
+    name: Realism Warm (${{ matrix.preset }})
+    needs: realism-seed
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - preset: node
+            major: '20'
+          - preset: python
+            major: '3.12'
+          - preset: go
+            major: '1.22'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build Action
+        run: |
+          npm ci
+          npm run build
+
+      - name: Recall Restore (Warm)
+        id: recall
+        uses: ./
+        with:
+          tool: ${{ matrix.preset }}
+          tool-major: ${{ matrix.major }}
+          save-on-default-branch-only: 'false'
+
+      - name: Assert Restore And Marker
+        env:
+          PRESET: ${{ matrix.preset }}
+          MARKER: ${{ github.run_id }}-${{ github.run_attempt }}
+          RESTORED: ${{ steps.recall.outputs.cache-restored }}
+        run: .github/scripts/e2e-preset.sh assert "$PRESET" "$MARKER" "$RESTORED"
+
+  # Single status check to require in the branch ruleset. Runs even when a dependency fails so the gate always
+  # reports, and fails unless every job succeeded (matrix jobs aggregate to one result each).
+  result:
+    name: E2E
+    needs: [preset-commands, smoke-seed, smoke-warm, realism-seed, realism-warm]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Verify All Jobs Succeeded
+        env:
+          RESULTS: ${{ join(needs.*.result, ' ') }}
+        run: |
+          printf 'dependency results: %s\n' "$RESULTS"
+          read -ra results <<<"$RESULTS"
+          for result in "${results[@]}"; do
+            if [[ "$result" != "success" ]]; then
+              printf '::error::E2E gate failed -- a required job did not succeed (%s)\n' "$RESULTS" >&2
+              exit 1
+            fi
+          done
+          printf 'all E2E jobs succeeded\n'

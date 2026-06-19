@@ -17,7 +17,7 @@ test('resolves a known preset with all variables interpolated', () => {
 })
 
 test('throws for an unknown preset and lists the available ones', () => {
-  assert.throws(() => resolvePreset('rust', base), /Unknown tool preset "rust".*node, codeql, python, go/s)
+  assert.throws(() => resolvePreset('rust', base), /Unknown tool preset "rust".*node, python, go/s)
 })
 
 test('omits an empty major segment without leaving a double dash', () => {

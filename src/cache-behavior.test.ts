@@ -22,7 +22,7 @@ test('dynamic restore reports restored without claiming an exact cache hit', () 
 })
 
 test('cache miss clears all restore outputs', () => {
-  assert.deepEqual(getRestoreOutputs('static'), {
+  assert.deepEqual(getRestoreOutputs('static', undefined), {
     cacheHit: 'false',
     cacheRestored: 'false',
     cacheKey: '',
