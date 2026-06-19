@@ -418,7 +418,7 @@ jobs:
   # Single status check to require in the branch ruleset. Runs even when a dependency fails so the gate always
   # reports, and fails unless every job succeeded (matrix jobs aggregate to one result each).
   result:
-    name: E2E Result
+    name: E2E
     needs: [preset-commands, smoke-seed, smoke-warm, realism-seed, realism-warm]
     if: ${{ always() }}
     runs-on: ubuntu-latest
