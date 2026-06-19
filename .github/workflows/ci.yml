@@ -54,6 +54,6 @@ jobs:
         run: npm run build
 
       - name: Pedant
-        uses: goeselt/pedant@052c9c1cec0436f4dacb44e4579bbff562d57b1f # v1.2.0
+        uses: goeselt/pedant@b8e404a982679f74a8cd9309de5d2492bc8030c3 # v1.2.3
         with:
           ignore: dist/
