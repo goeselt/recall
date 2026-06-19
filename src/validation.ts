@@ -8,6 +8,7 @@ export function validateCachePath(value: string, runnerOs: string | undefined): 
   if (!pathApi.isAbsolute(value)) {
     throw new Error(
       'Input "path" must be an absolute path. ' +
+        // eslint-disable-next-line no-template-curly-in-string -- shows literal GitHub Actions syntax
         'Use a value like "${{ github.workspace }}/vendor" instead of "./vendor".',
     )
   }
