@@ -1,0 +1,273 @@
+---
+name: E2E
+
+# Two test tracks:
+#
+#  preset-commands -- validates that each preset's version-command and version-pattern work
+#                     on the real runner using pre-installed tools. Fast (~30s), no cache I/O.
+#
+#  smoke (seed --> warm) -- validates the full cold-->save-->restore lifecycle using only small fixtures
+#                           (CMake ~60 MB, static data dir), plus the PR default-branch save gate.
+#
+# Preset path correctness (RUNNER_TOOL_CACHE/<tool>) and the full per-preset save/restore lifecycle are
+# covered by e2e-presets.yml (workflow_dispatch only) because the cache saves for real tools are slow.
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  # Caches are shared state -- do not cancel a run while a post step is saving.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+env:
+  # Pinned CMake release (linux-x86_64). Bump to refresh the cached version.
+  CMAKE_VERSION: '4.3.3'
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  preset-commands:
+    name: Validate Preset Version Commands
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+
+      # Install the same tool versions referenced by the preset tool-major values so the version-command output
+      # is representative of real usage.
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '24'
+
+      - name: Setup Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: '3.12'
+
+      - name: Setup Go
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: '1.22'
+
+      # For each preset (except codeql, which has no setup action), read version-command and
+      # version-pattern from presets.json via jq, run the command, and validate the pattern.
+      # Node.js handles the regex because grep -oP returns the full match, not a capture group.
+      - name: Validate Version Commands
+        run: |
+          node --input-type=module <<'EOF'
+          import { readFileSync } from 'node:fs'
+          import { execFileSync } from 'node:child_process'
+
+          const presets = JSON.parse(readFileSync('presets.json', 'utf8'))
+          // Add preset names here when they have no setup action available on the runner.
+          const skip = new Set(['codeql'])
+          let failed = false
+
+          for (const [name, preset] of Object.entries(presets)) {
+            if (skip.has(name)) {
+              console.log(`preset "${name}": skipped (no setup action available)`)
+              continue
+            }
+            const cmd = preset['version-command']
+            let output
+            try {
+              output = execFileSync(cmd[0], cmd.slice(1), { encoding: 'utf8', timeout: 5000 }).trim()
+            } catch (err) {
+              console.error(`::error::preset "${name}": "${cmd.join(' ')}" failed: ${err.message}`)
+              failed = true
+              continue
+            }
+            const match = output.match(new RegExp(preset['version-pattern']))
+            if (!match) {
+              console.error(`::error::preset "${name}": /${preset['version-pattern']}/ did not match "${output}"`)
+              failed = true
+            } else {
+              console.log(`preset "${name}": ${cmd.join(' ')} -> "${output}" -> version=${match[1] ?? match[0]}`)
+            }
+          }
+
+          if (failed) process.exit(1)
+          EOF
+
+  seed:
+    name: Smoke Seed
+    permissions:
+      contents: read
+      actions: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # Delete only caches created by this smoke test so the job exercises the cold path without evicting unrelated
+      # repository caches.
+      - name: Purge Smoke Caches
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CMAKE_PREFIX: recall-e2e-cmake-${{ runner.os }}-${{ runner.arch }}-
+          DATA_PREFIX: recall-e2e-data-${{ runner.os }}-${{ runner.arch }}-
+          GATED_PREFIX: recall-e2e-gated-
+        run: |
+          gh cache list --repo "$GITHUB_REPOSITORY" --limit 1000 --json id,key -q '.[] | [.id, .key] | @tsv' \
+            | while IFS=$'\t' read -r id key; do
+              case "$key" in
+                "$CMAKE_PREFIX"*|"$DATA_PREFIX"*|"$GATED_PREFIX"*)
+                  gh cache delete "$id" --repo "$GITHUB_REPOSITORY" || true
+                  ;;
+              esac
+            done
+
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build Action
+        run: |
+          npm ci
+          npm run build
+
+      # -- Explicit (Dynamic) ------------------------------------------------------------------------------------------
+
+      - name: Cache CMake (Explicit, Dynamic)
+        uses: ./
+        with:
+          path: /opt/cmake
+          key-prefix: recall-e2e-cmake-${{ runner.os }}-${{ runner.arch }}
+          version-command: cmake --version
+          save-on-default-branch-only: 'false'
+
+      - name: Install CMake
+        run: |
+          asset="cmake-${CMAKE_VERSION}-linux-x86_64"
+          url="https://github.com/Kitware/CMake/releases/download/v${CMAKE_VERSION}/${asset}.tar.gz"
+          sudo mkdir -p /opt/cmake
+          curl -fsSL "$url" | sudo tar -xz -C /opt/cmake
+          printf '%s\n' "/opt/cmake/${asset}/bin" >> "$GITHUB_PATH"
+
+      # -- Static Version ----------------------------------------------------------------------------------------------
+
+      - name: Create Data Directory
+        run: |
+          mkdir -p /tmp/data
+          printf 'seeded-content\n' > /tmp/data/marker.txt
+
+      - name: Cache Data Directory (Static Version)
+        uses: ./
+        with:
+          path: /tmp/data
+          key-prefix: recall-e2e-data-${{ runner.os }}-${{ runner.arch }}
+          version: v1
+          save-on-default-branch-only: 'false'
+
+      # -- Default Branch Gate --------------------------------------------------------------------------------------------
+
+      - name: Create Gated Directory
+        if: github.event_name == 'pull_request'
+        run: |
+          mkdir -p /tmp/gated
+          printf 'must-not-save\n' > /tmp/gated/marker.txt
+
+      - name: Try Cache Save With Default Gate
+        if: github.event_name == 'pull_request'
+        uses: ./
+        with:
+          path: /tmp/gated
+          key-prefix: recall-e2e-gated-${{ github.run_id }}-${{ github.run_attempt }}-${{ runner.os }}-${{ runner.arch }}
+          version: v1
+
+  warm:
+    name: Smoke Restore
+    needs: seed
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: 24
+          cache: npm
+
+      - name: Build Action
+        run: |
+          npm ci
+          npm run build
+
+      # -- Explicit (Dynamic) ------------------------------------------------------------------------------------------
+
+      - name: Restore CMake
+        id: cmake
+        uses: ./
+        with:
+          path: /opt/cmake
+          key-prefix: recall-e2e-cmake-${{ runner.os }}-${{ runner.arch }}
+          version-command: cmake --version
+          save-on-default-branch-only: 'false'
+
+      - name: Assert CMake Restored And Add To PATH
+        env:
+          RESTORED: ${{ steps.cmake.outputs.cache-restored }}
+        run: |
+          test "$RESTORED" = "true" \
+            || { printf '::error::expected cmake cache restore, got "%s"\n' "$RESTORED" >&2; exit 1; }
+          bin="/opt/cmake/cmake-${CMAKE_VERSION}-linux-x86_64/bin"
+          test -x "$bin/cmake" || { printf '::error::restored cmake binary missing at %s\n' "$bin" >&2; exit 1; }
+          printf '%s\n' "$bin" >> "$GITHUB_PATH"
+
+      # -- Static Version ----------------------------------------------------------------------------------------------
+
+      # Do not pre-create the directory: a hit must restore the content from the cache.
+      - name: Restore Data Directory
+        id: data
+        uses: ./
+        with:
+          path: /tmp/data
+          key-prefix: recall-e2e-data-${{ runner.os }}-${{ runner.arch }}
+          version: v1
+          save-on-default-branch-only: 'false'
+
+      - name: Assert Data Hit And Content
+        env:
+          HIT: ${{ steps.data.outputs.cache-hit }}
+        run: |
+          test "$HIT" = "true" || { printf '::error::expected data cache hit, got "%s"\n' "$HIT" >&2; exit 1; }
+          grep -q 'seeded-content' /tmp/data/marker.txt \
+            || { printf '::error::restored content missing from /tmp/data/marker.txt\n' >&2; exit 1; }
+
+      - name: Restore Gated Directory
+        if: github.event_name == 'pull_request'
+        id: gated
+        uses: ./
+        with:
+          path: /tmp/gated
+          key-prefix: recall-e2e-gated-${{ github.run_id }}-${{ github.run_attempt }}-${{ runner.os }}-${{ runner.arch }}
+          version: v1
+          save-on-default-branch-only: 'false'
+
+      - name: Assert Default Gate Prevented Save
+        if: github.event_name == 'pull_request'
+        env:
+          HIT: ${{ steps.gated.outputs.cache-hit }}
+        run: |
+          test "$HIT" = "false" || { printf '::error::expected gated cache miss, got "%s"\n' "$HIT" >&2; exit 1; }

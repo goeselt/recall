@@ -1,0 +1,23 @@
+{
+  "name": "recall",
+  "version": "1.0.2",
+  "private": true,
+  "description": "Tool cache restore/save GitHub Action with post-step save",
+  "type": "module",
+  "scripts": {
+    "build": "npm run build:main && npm run build:post",
+    "build:main": "esbuild src/main.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/main/index.cjs",
+    "build:post": "esbuild src/post.ts --bundle --platform=node --target=node24 --format=cjs --outfile=dist/post/index.cjs",
+    "typecheck": "tsc --noEmit",
+    "test": "node --test src/*.test.ts"
+  },
+  "dependencies": {
+    "@actions/cache": "^6.0.1",
+    "@actions/core": "^3.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "25.x",
+    "esbuild": "0.28.1",
+    "typescript": "6.0.3"
+  }
+}

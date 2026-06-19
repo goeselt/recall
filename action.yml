@@ -1,0 +1,57 @@
+---
+name: Recall
+description: >-
+  Restore a directory from cache before it is populated and save it in the post step, keyed by a version. The version is either detected dynamically (version-command, run after the tool is installed) or supplied statically (version). Supports built-in presets (node, codeql, python, go) and explicit configuration for any directory. By default, PRs and feature branches restore existing caches but only default-branch events save new caches.
+author: ico-devops
+inputs:
+  tool:
+    description: >-
+      Built-in preset name: node, codeql, python or go. Fills path, key-prefix and version-command from the preset. Any explicit input overrides the corresponding preset value.
+    required: false
+  tool-major:
+    description: >-
+      Major release of the preset tool (e.g. "22" for Node.js), inserted into the cache key prefix so a multi-version matrix does not cross-restore. Preset mode only; has no effect without "tool". Optional -- omit to share one prefix across all majors.
+    required: false
+  path:
+    description: >-
+      Absolute path to the directory to cache. Required unless "tool" is set. Must not be a filesystem root or symbolic link. Overrides the preset value.
+    required: false
+  key-prefix:
+    description: >-
+      Cache key prefix without a trailing dash. The resolved version is appended to form the full key (prefix "node-22-linux-x64" yields key "node-22-linux-x64-22.15.0"). Use only letters, numbers, dots, underscores and hyphens. Required unless "tool" is set. Overrides the preset value.
+    required: false
+  version:
+    description: >-
+      Static version identifier appended to key-prefix to form the exact cache key. Use only letters, numbers, dots, underscores and hyphens. Use when the directory has no single tool to query (multiple or no executables). Mutually exclusive with "version-command". IMPORTANT: bump this whenever the cached content changes, otherwise a stale cache is restored.
+    required: false
+  version-command:
+    description: >-
+      Command run in the post step on cold dynamic runs (after the tool is installed) to detect the version, e.g. "node --version". Skipped after a dynamic cache restore. Mutually exclusive with "version". A plain executable with arguments only -- no pipes, redirects or shell operators.
+    required: false
+  version-pattern:
+    description: >-
+      Regular expression applied to the version-command output to extract the version. Uses the first capture group if present, otherwise the full match. The extracted version must contain only letters, numbers, dots, underscores and hyphens. Dynamic mode only; has no effect when "version" (static) is set.
+    required: false
+    default: '(\d+\.\d+\.\d+)'
+  save-on-default-branch-only:
+    description: >-
+      When "true" (default), the cache is saved only on default-branch events such as push, schedule and workflow_dispatch; pull_request and pull_request_target runs skip saving. Set to "false" to save on every branch/event.
+    required: false
+    default: 'true'
+
+outputs:
+  cache-hit:
+    description: >-
+      "true" only when an exact cache key was restored. Dynamic prefix restores set this to "false" because the final version is not known until the post step.
+  cache-restored:
+    description: >-
+      "true" if any cache entry was restored, including a dynamic prefix match.
+  cache-key:
+    description: 'The cache key that was restored (empty if no cache was found).'
+
+runs:
+  using: node24
+  main: dist/main/index.cjs
+  post: dist/post/index.cjs
+  # success() skips the save step when a step after the restore fails, preventing partially-installed tools from being cached.
+  post-if: success()
