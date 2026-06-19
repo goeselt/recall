@@ -6,7 +6,11 @@ var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getProtoOf = Object.getPrototypeOf;
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 var __commonJS = (cb, mod) => function __require() {
-  return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  try {
+    return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
+  } catch (e) {
+    throw mod = 0, e;
+  }
 };
 var __export = (target, all) => {
   for (var name in all)
@@ -22819,7 +22823,7 @@ var require_package = __commonJS({
   "node_modules/@actions/cache/package.json"(exports2, module2) {
     module2.exports = {
       name: "@actions/cache",
-      version: "6.0.1",
+      version: "6.1.0",
       description: "Actions cache lib",
       keywords: [
         "github",
