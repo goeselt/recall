@@ -1,12 +1,12 @@
 ---
 name: Recall
 description: >-
-  Restore a directory from cache before it is populated and save it in the post step, keyed by a version. The version is either detected dynamically (version-command, run after the tool is installed) or supplied statically (version). Supports built-in presets (node, codeql, python, go) and explicit configuration for any directory. By default, PRs and feature branches restore existing caches but only default-branch events save new caches.
+  Restore a directory from cache before it is populated and save it in the post step, keyed by a version. The version is either detected dynamically (version-command, run after the tool is installed) or supplied statically (version). Supports built-in presets (node, python, go) and explicit configuration for any directory. By default, PRs and feature branches restore existing caches but only default-branch events save new caches.
 author: ico-devops
 inputs:
   tool:
     description: >-
-      Built-in preset name: node, codeql, python or go. Fills path, key-prefix and version-command from the preset. Any explicit input overrides the corresponding preset value.
+      Built-in preset name: node, python or go. Fills path, key-prefix and version-command from the preset. Any explicit input overrides the corresponding preset value.
     required: false
   tool-major:
     description: >-

@@ -2,7 +2,7 @@
 
 Action to cache a tool directory in one step -- restore before installation, save after, gated to the default branch.
 Replaces the duplicated `actions/cache/restore` + `actions/cache/save` boilerplate with built-in presets for Node.js,
-Python, Go, and CodeQL.
+Python and Go.
 
 > [!NOTE]
 >
@@ -94,7 +94,7 @@ The first push to `main` seeds the cache. All subsequent runs -- on `main` and a
 
 ### Preset Mode (Dynamic)
 
-Built-in presets: `node`, `codeql`, `python`, `go`.
+Built-in presets: `node`, `python`, `go`.
 
 ```yaml
 - uses: goeselt/recall@v1
@@ -105,9 +105,10 @@ Built-in presets: `node`, `codeql`, `python`, `go`.
 
 > [!NOTE]
 >
-> The `codeql` preset detects the version with `codeql version`. `github/codeql-action/init` installs the CLI into the
-> tool cache but does not add it to `PATH`, so the post step can only detect the version if `codeql` is on `PATH`. Add
-> it after init, or the save is skipped.
+> There is no `codeql` preset. GitHub-hosted runners ship the CodeQL CLI pre-installed (the "CodeQL Action Bundle", see
+> the [runner image manifest](https://github.com/actions/runner-images/blob/main/images/ubuntu/Ubuntu2404-Readme.md)),
+> so it does not need caching. On a self-hosted runner, cache it with [explicit mode](#explicit-mode-dynamic) and make
+> sure `codeql` is on `PATH` for the post step.
 
 ### Explicit Mode (Dynamic)
 
@@ -145,7 +146,7 @@ For an arbitrary directory with no single tool to query, supply the version dire
 
 | Input                         | Required        | Default           | Description                                                    |
 | ----------------------------- | --------------- | ----------------- | -------------------------------------------------------------- |
-| `tool`                        | No              | --                | Preset name (`node`, `codeql`, `python`, `go`)                 |
+| `tool`                        | No              | --                | Preset name (`node`, `python`, `go`)                           |
 | `tool-major`                  | No              | --                | Major release for preset key-prefix scoping (preset mode only) |
 | `path`                        | Unless `tool`   | --                | Absolute directory to cache (overrides preset)                 |
 | `key-prefix`                  | Unless `tool`   | --                | Cache key prefix without trailing dash (overrides preset)      |
@@ -188,7 +189,7 @@ Check that the setup/install step populated the same `path` configured for Recal
 cache. A later cold default-branch run will seed a fresh key when needed.
 
 **Version command failed:** the command runs in the post step, after the setup/install step. Make sure the executable is
-available on `PATH` by then. For CodeQL, `github/codeql-action/init` installs the CLI but does not add it to `PATH`.
+available on `PATH` by then.
 
 **Version pattern did not match:** run the command locally or in a workflow step and tune `version-pattern` so the first
 capture group is the version you want in the cache key.
