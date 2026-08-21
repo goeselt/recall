@@ -32,7 +32,7 @@ jobs:
           private-key: ${{ secrets.RELEASE_APP_KEY }}
 
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0 # intent release needs full history to find the previous release tag
           token: ${{ steps.app.outputs.token }}
@@ -40,13 +40,13 @@ jobs:
 
       - id: intent
         name: Intent Release
-        uses: goeselt/intent@10ce9d916bb1af60c48ff1bc03a99348aede7f1a # v1.1.4
+        uses: goeselt/intent@4ddbdcaca80e9eec590a81badeb0bc747fd65cbf # v1.3.0
         with:
           initial-version: '1.0.0'
 
       - name: Setup Node.js
         if: steps.intent.outputs.release-needed == 'true'
-        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
 
@@ -66,7 +66,7 @@ jobs:
 
       - name: Commit
         if: steps.intent.outputs.release-needed == 'true'
-        uses: goeselt/scribe@c233f5828a9590d21e2af93d7f2d4cf6a81ac822 # v1.2.0
+        uses: goeselt/scribe@2d727b24c709116d2951b61d0091ed20bf777b72 # v1.2.3
         with:
           files: |
             dist/
@@ -81,7 +81,7 @@ jobs:
 
       - name: Ship
         if: steps.intent.outputs.release-needed == 'true'
-        uses: goeselt/dispatch@537bfa0724a8de8b2a8e282458944a9cf368f740 # v1.2.3
+        uses: goeselt/dispatch@72482f5dee11ae6ad32d44b9d926c6d1708dea98 # v1.3.6
         with:
           release-tag: ${{ steps.intent.outputs.release-tag }}
           major-tag: ${{ steps.intent.outputs.major-tag }}
